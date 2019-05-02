@@ -9,6 +9,41 @@ import (
 	"time"
 )
 
+func TestComments(t *testing.T) {
+	type Server struct {
+		Name string `toml:"name" tomlcp:"Name or IP address of server"`
+	}
+	type Config struct {
+		Server *Server `toml:"server" tomlcp:"This is the Server subsection"`
+		Item   int     `toml:"item" tomlcp:"An Item is\nwhat an Item is."`
+	}
+
+	tests := map[string]struct {
+		input      interface{}
+		wantOutput string
+		wantError  error
+	}{
+		"comment paragraph": {
+			input:      Config{Item: 42},
+			wantOutput: "# An Item is\n# what an Item is.\nitem = 42\n",
+		},
+		"comment paragraph with subsection": {
+			input:      Config{Item: 42, Server: &Server{Name: "1.2.3.4"}},
+			wantOutput: "# An Item is\n# what an Item is.\nitem = 42\n\n# This is the Server subsection\n[server]\n  # Name or IP address of server\n  name = \"1.2.3.4\"\n",
+		},
+		"comment paragraphs inside map": {
+			input: map[string]Config{
+				"a": Config{Item: 43},
+				"b": Config{Item: 44},
+			},
+			wantOutput: "[a]\n  # An Item is\n  # what an Item is.\n  item = 43\n\n[b]\n  # An Item is\n  # what an Item is.\n  item = 44\n",
+		},
+	}
+	for label, test := range tests {
+		encodeExpected(t, label, test.input, test.wantOutput, test.wantError)
+	}
+}
+
 func TestEncodeRoundTrip(t *testing.T) {
 	type Config struct {
 		Age        int

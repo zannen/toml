@@ -101,18 +101,18 @@ func (enc *Encoder) safeEncode(key Key, rv reflect.Value) (err error) {
 			panic(r)
 		}
 	}()
-	enc.encode(key, rv)
+	enc.encode(key, rv, nil)
 	return nil
 }
 
-func (enc *Encoder) encode(key Key, rv reflect.Value) {
+func (enc *Encoder) encode(key Key, rv reflect.Value, opts *tagOptions) {
 	// Special case. Time needs to be in ISO8601 format.
 	// Special case. If we can marshal the type to text, then we used that.
 	// Basically, this prevents the encoder for handling these types as
 	// generic structs (or whatever the underlying type of a TextMarshaler is).
 	switch rv.Interface().(type) {
 	case time.Time, TextMarshaler:
-		enc.keyEqElement(key, rv)
+		enc.keyEqElement(key, rv, opts)
 		return
 	}
 
@@ -123,30 +123,30 @@ func (enc *Encoder) encode(key Key, rv reflect.Value) {
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
 		reflect.Uint64,
 		reflect.Float32, reflect.Float64, reflect.String, reflect.Bool:
-		enc.keyEqElement(key, rv)
+		enc.keyEqElement(key, rv, opts)
 	case reflect.Array, reflect.Slice:
 		if typeEqual(tomlArrayHash, tomlTypeOfGo(rv)) {
 			enc.eArrayOfTables(key, rv)
 		} else {
-			enc.keyEqElement(key, rv)
+			enc.keyEqElement(key, rv, opts)
 		}
 	case reflect.Interface:
 		if rv.IsNil() {
 			return
 		}
-		enc.encode(key, rv.Elem())
+		enc.encode(key, rv.Elem(), nil)
 	case reflect.Map:
 		if rv.IsNil() {
 			return
 		}
-		enc.eTable(key, rv)
+		enc.eTable(key, rv, opts)
 	case reflect.Ptr:
 		if rv.IsNil() {
 			return
 		}
-		enc.encode(key, rv.Elem())
+		enc.encode(key, rv.Elem(), opts)
 	case reflect.Struct:
-		enc.eTable(key, rv)
+		enc.eTable(key, rv, opts)
 	default:
 		panic(e("unsupported type for key '%s': %s", key, k))
 	}
@@ -238,7 +238,7 @@ func (enc *Encoder) eArrayOfTables(key Key, rv reflect.Value) {
 	}
 }
 
-func (enc *Encoder) eTable(key Key, rv reflect.Value) {
+func (enc *Encoder) eTable(key Key, rv reflect.Value, opts *tagOptions) {
 	panicIfInvalidKey(key)
 	if len(key) == 1 {
 		// Output an extra newline between top-level tables.
@@ -246,6 +246,7 @@ func (enc *Encoder) eTable(key Key, rv reflect.Value) {
 		enc.newline()
 	}
 	if len(key) > 0 {
+		enc.writeCommentsPara(key, opts)
 		enc.wf("%s[%s]", enc.indentStr(key), key.maybeQuotedAll())
 		enc.newline()
 	}
@@ -289,7 +290,7 @@ func (enc *Encoder) eMap(key Key, rv reflect.Value) {
 				// Don't write anything for nil fields.
 				continue
 			}
-			enc.encode(key.add(mapKey), mrv)
+			enc.encode(key.add(mapKey), mrv, nil)
 		}
 	}
 	writeMapKeys(mapKeysDirect)
@@ -368,7 +369,7 @@ func (enc *Encoder) eStruct(key Key, rv reflect.Value) {
 				continue
 			}
 
-			enc.encode(key.add(keyName), sf)
+			enc.encode(key.add(keyName), sf, &opts)
 		}
 	}
 	writeFields(fieldsDirect)
@@ -458,10 +459,12 @@ func tomlArrayType(rv reflect.Value) tomlType {
 }
 
 type tagOptions struct {
-	skip      bool // "-"
-	name      string
-	omitempty bool
-	omitzero  bool
+	skip        bool // "-"
+	name        string
+	omitempty   bool
+	omitzero    bool
+	comment     string
+	commentpara string
 }
 
 func getOptions(tag reflect.StructTag) tagOptions {
@@ -480,6 +483,9 @@ func getOptions(tag reflect.StructTag) tagOptions {
 			opts.omitzero = true
 		}
 	}
+
+	opts.comment = tag.Get("tomlc")
+	opts.commentpara = tag.Get("tomlcp")
 	return opts
 }
 
@@ -511,11 +517,25 @@ func (enc *Encoder) newline() {
 	}
 }
 
-func (enc *Encoder) keyEqElement(key Key, val reflect.Value) {
+func (enc *Encoder) writeCommentsPara(key Key, opts *tagOptions) {
+	if opts == nil {
+		return
+	}
+	if opts.commentpara == "" {
+		return
+	}
+	for _, c := range strings.Split(opts.commentpara, "\n") {
+		enc.wf("%s# %s", enc.indentStr(key), c)
+		enc.newline()
+	}
+}
+
+func (enc *Encoder) keyEqElement(key Key, val reflect.Value, opts *tagOptions) {
 	if len(key) == 0 {
 		encPanic(errNoKey)
 	}
 	panicIfInvalidKey(key)
+	enc.writeCommentsPara(key, opts)
 	enc.wf("%s%s = ", enc.indentStr(key), key.maybeQuoted(len(key)-1))
 	enc.eElement(val)
 	enc.newline()
